@@ -7,7 +7,7 @@ import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 
 from homeassistant.components.climate import (ClimateDevice, PLATFORM_SCHEMA, STATE_OFF, STATE_IDLE, STATE_HEAT, STATE_COOL, STATE_AUTO,
-ATTR_OPERATION_MODE, SUPPORT_OPERATION_MODE, SUPPORT_TARGET_TEMPERATURE, SUPPORT_FAN_MODE)
+ATTR_OPERATION_MODE, SUPPORT_OPERATION_MODE, SUPPORT_TARGET_TEMPERATURE, SUPPORT_FAN_MODE, ATTR_SWING_MODE, SUPPORT_SWING_MODE)
 from homeassistant.const import (ATTR_UNIT_OF_MEASUREMENT, ATTR_TEMPERATURE, CONF_NAME, CONF_HOST, CONF_MAC, CONF_TIMEOUT, CONF_CUSTOMIZE)
 from homeassistant.helpers.event import (async_track_state_change)
 from homeassistant.core import callback
@@ -19,18 +19,19 @@ REQUIREMENTS = ['broadlink==0.9.0']
 
 _LOGGER = logging.getLogger(__name__)
 
-SUPPORT_FLAGS = SUPPORT_TARGET_TEMPERATURE | SUPPORT_OPERATION_MODE | SUPPORT_FAN_MODE
+SUPPORT_FLAGS = SUPPORT_TARGET_TEMPERATURE | SUPPORT_OPERATION_MODE | SUPPORT_FAN_MODE | SUPPORT_SWING_MODE
 
 CONF_IRCODES_INI = 'ircodes_ini'
 CONF_MIN_TEMP = 'min_temp'
 CONF_MAX_TEMP = 'max_temp'
 CONF_TARGET_TEMP = 'target_temp'
-CONF_TARGET_TEMP_STEP = 'target_temp_step'
 CONF_TEMP_SENSOR = 'temp_sensor'
 CONF_OPERATIONS = 'operations'
 CONF_FAN_MODES = 'fan_modes'
+CONF_SWING_MODES = 'swing_modes'
 CONF_DEFAULT_OPERATION = 'default_operation'
 CONF_DEFAULT_FAN_MODE = 'default_fan_mode'
+CONF_DEFAULT_SWING_MODE = 'default_swing_mode'
 
 CONF_DEFAULT_OPERATION_FROM_IDLE = 'default_operation_from_idle'
 
@@ -40,15 +41,17 @@ DEFAULT_RETRY = 3
 DEFAULT_MIN_TEMP = 16
 DEFAULT_MAX_TEMP = 30
 DEFAULT_TARGET_TEMP = 20
-DEFAULT_TARGET_TEMP_STEP = 1
 DEFAULT_OPERATION_LIST = [STATE_OFF, STATE_HEAT, STATE_COOL, STATE_AUTO]
 DEFAULT_FAN_MODE_LIST = ['low', 'mid', 'high', 'auto']
 DEFAULT_OPERATION = 'off'
 DEFAULT_FAN_MODE = 'auto'
+DEFAULT_SWING_MODE = 'off'
+DEFAULT_SWING_MODE_LIST = ['off', 'on']
 
 CUSTOMIZE_SCHEMA = vol.Schema({
     vol.Optional(CONF_OPERATIONS): vol.All(cv.ensure_list, [cv.string]),
-    vol.Optional(CONF_FAN_MODES): vol.All(cv.ensure_list, [cv.string])
+    vol.Optional(CONF_FAN_MODES): vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional(CONF_SWING_MODES): vol.All(cv.ensure_list, [cv.string])
 })
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
@@ -60,12 +63,12 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_MIN_TEMP, default=DEFAULT_MIN_TEMP): cv.positive_int,
     vol.Optional(CONF_MAX_TEMP, default=DEFAULT_MAX_TEMP): cv.positive_int,
     vol.Optional(CONF_TARGET_TEMP, default=DEFAULT_TARGET_TEMP): cv.positive_int,
-    vol.Optional(CONF_TARGET_TEMP_STEP, default=DEFAULT_TARGET_TEMP_STEP): cv.positive_int,
     vol.Optional(CONF_TEMP_SENSOR): cv.entity_id,
     vol.Optional(CONF_CUSTOMIZE, default={}): CUSTOMIZE_SCHEMA,
     vol.Optional(CONF_DEFAULT_OPERATION, default=DEFAULT_OPERATION): cv.string,
     vol.Optional(CONF_DEFAULT_FAN_MODE, default=DEFAULT_FAN_MODE): cv.string,
-    vol.Optional(CONF_DEFAULT_OPERATION_FROM_IDLE): cv.string
+    vol.Optional(CONF_DEFAULT_OPERATION_FROM_IDLE): cv.string,
+    vol.Optional(CONF_DEFAULT_SWING_MODE, default=DEFAULT_SWING_MODE): cv.string
 })
 
 @asyncio.coroutine
@@ -78,12 +81,13 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
     min_temp = config.get(CONF_MIN_TEMP)
     max_temp = config.get(CONF_MAX_TEMP)
     target_temp = config.get(CONF_TARGET_TEMP)
-    target_temp_step = config.get(CONF_TARGET_TEMP_STEP)
     temp_sensor_entity_id = config.get(CONF_TEMP_SENSOR)
     operation_list = config.get(CONF_CUSTOMIZE).get(CONF_OPERATIONS, []) or DEFAULT_OPERATION_LIST
     fan_list = config.get(CONF_CUSTOMIZE).get(CONF_FAN_MODES, []) or DEFAULT_FAN_MODE_LIST
     default_operation = config.get(CONF_DEFAULT_OPERATION)
     default_fan_mode = config.get(CONF_DEFAULT_FAN_MODE)
+    default_swing_mode = config.get(CONF_DEFAULT_SWING_MODE)
+    swing_list = config.get(CONF_CUSTOMIZE).get(CONF_SWING_MODES, []) or DEFAULT_SWING_MODE_LIST
     
     default_operation_from_idle = config.get(CONF_DEFAULT_OPERATION_FROM_IDLE)
     
@@ -113,12 +117,12 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         return
     
     async_add_devices([
-        BroadlinkIRClimate(hass, name, broadlink_device, ircodes_ini, min_temp, max_temp, target_temp, target_temp_step, temp_sensor_entity_id, operation_list, fan_list, default_operation, default_fan_mode, default_operation_from_idle)
+        BroadlinkIRClimate(hass, name, broadlink_device, ircodes_ini, min_temp, max_temp, target_temp, temp_sensor_entity_id, operation_list, fan_list, default_operation, default_fan_mode, default_operation_from_idle, swing_list, default_swing_mode)
     ])
 
 class BroadlinkIRClimate(ClimateDevice):
 
-    def __init__(self, hass, name, broadlink_device, ircodes_ini, min_temp, max_temp, target_temp, target_temp_step, temp_sensor_entity_id, operation_list, fan_list, default_operation, default_fan_mode, default_operation_from_idle):
+    def __init__(self, hass, name, broadlink_device, ircodes_ini, min_temp, max_temp, target_temp, temp_sensor_entity_id, operation_list, fan_list, default_operation, default_fan_mode, default_operation_from_idle, swing_list, default_swing_mode):
                  
         """Initialize the Broadlink IR Climate device."""
         self.hass = hass
@@ -127,7 +131,7 @@ class BroadlinkIRClimate(ClimateDevice):
         self._min_temp = min_temp
         self._max_temp = max_temp
         self._target_temperature = target_temp
-        self._target_temperature_step = target_temp_step
+        self._target_temperature_step = 1
         self._unit_of_measurement = hass.config.units.temperature_unit
         
         self._current_temperature = 0
@@ -135,9 +139,11 @@ class BroadlinkIRClimate(ClimateDevice):
 
         self._current_operation = default_operation
         self._current_fan_mode = default_fan_mode
+        self._current_swing_mode = default_swing_mode
         
         self._operation_list = operation_list
         self._fan_list = fan_list
+        self._swing_list = swing_list
         
         self._default_operation_from_idle = default_operation_from_idle
                 
@@ -154,15 +160,21 @@ class BroadlinkIRClimate(ClimateDevice):
                 self._async_update_current_temp(sensor_state)
     
     
-    def send_ir(self):     
+    def send_ir(self,swing=0):     
         section = self._current_operation.lower()
         
         if section == 'off':
             value = 'off_command'
+            self._current_swing_mode = 'off'
         elif section == 'idle':
             value = 'idle_command'
+            self._current_swing_mode = 'off'
         else: 
             value = self._current_fan_mode.lower() + "_" + str(int(self._target_temperature)) if not section == 'off' else 'off_command'
+        
+        if swing and value != 'off_command' and value != 'idle_command':
+            section = 'swing'
+            value = 'swing_' + self._current_swing_mode.lower()
         
         command = self._commands_ini.get(section, value)
         
@@ -268,6 +280,16 @@ class BroadlinkIRClimate(ClimateDevice):
     def fan_list(self):
         """Return the list of available fan modes."""
         return self._fan_list
+
+    @property
+    def swing_list(self):
+        """Return the list of available swing modes."""
+        return self._swing_list
+
+    @property
+    def current_swing_mode(self):
+        """Return the swing setting."""
+        return self._current_swing_mode
         
     @property
     def supported_features(self):
@@ -296,6 +318,15 @@ class BroadlinkIRClimate(ClimateDevice):
             
         self.schedule_update_ha_state()
 
+    def set_swing_mode(self, swing):
+        """Set new target swing."""
+        self._current_swing_mode = swing
+        
+        if not (self._current_operation.lower() == 'off' or self._current_operation.lower() == 'idle'):
+            self.send_ir(1)
+            
+        self.schedule_update_ha_state()
+
     def set_operation_mode(self, operation_mode):
         """Set new target temperature."""
         self._current_operation = operation_mode
@@ -311,3 +342,4 @@ class BroadlinkIRClimate(ClimateDevice):
             self._target_temperature = state.attributes['temperature']
             self._current_operation = state.attributes['operation_mode']
             self._current_fan_mode = state.attributes['fan_mode']
+            self._current_swing_mode = state.attributes['swing_mode']
